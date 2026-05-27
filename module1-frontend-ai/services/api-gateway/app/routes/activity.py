@@ -12,16 +12,29 @@ from app.services.blockchain_service import (
     mint_credit_on_blockchain
 )
 
+from fastapi import Depends
+
+from app.services.auth_dependency import (
+    farmer_only,
+    auditor_only,
+    admin_only
+)
+
 from datetime import datetime
 from bson import ObjectId
 import traceback
 
-router = APIRouter()
-
+router = APIRouter(
+    prefix="/activities",
+    tags=["Activities"]
+)
 
 # create a new farmer activity
 @router.post("/activities")
-async def create_activity(activity: ActivityCreate):
+async def create_activity(
+    activity: ActivityCreate,
+    user=Depends(farmer_only)
+):
 
     try:
 
@@ -120,7 +133,10 @@ async def get_farmer_activities(farmer_id: str):
 
 # verify farmer activity
 @router.post("/activities/{activity_id}/verify")
-async def verify_activity(activity_id: str):
+async def verify_activity(
+    activity_id: str,
+    user=Depends(auditor_only)
+):
 
     try:
 
@@ -180,9 +196,7 @@ async def verify_activity(activity_id: str):
     # reject farmer activity
 @router.post("/activities/{activity_id}/reject")
 async def reject_activity(activity_id: str):
-
     try:
-
         # check activity exists
         activity = await database.activities.find_one({
             "_id": ObjectId(activity_id)
@@ -196,15 +210,11 @@ async def reject_activity(activity_id: str):
 
         # update rejection details
         update_data = {
-
             "status": "rejected",
-
             "verification.verified": False,
-
             "verification.verifiedBy": "AUDITOR-001",
-
             "verification.verifiedAt":
-                datetime.utcnow().isoformat()
+            datetime.utcnow().isoformat()
         }
 
         # update mongodb
@@ -220,7 +230,6 @@ async def reject_activity(activity_id: str):
         }
 
     except Exception as e:
-
         print("ERROR OCCURRED:")
         traceback.print_exc()
 
@@ -230,10 +239,12 @@ async def reject_activity(activity_id: str):
     
 # mint carbon credits
 @router.post("/activities/{activity_id}/mint")
-async def mint_credits(activity_id: str):
-
+async def mint_credits(
+    activity_id: str,
+    user=Depends(admin_only)
+):
+    
     try:
-
         # get activity from mongodb
         activity = await database.activities.find_one({
             "_id": ObjectId(activity_id)
@@ -241,14 +252,12 @@ async def mint_credits(activity_id: str):
 
         # check activity exists
         if not activity:
-
             return {
                 "message": "Activity not found"
             }
 
         # allow only verified activities
         if activity["status"] != "verified":
-
             return {
                 "message": "Activity must be verified before minting"
             }
@@ -264,20 +273,45 @@ async def mint_credits(activity_id: str):
 
         # update credit details
         update_data = {
-
             "status": "credits_minted",
-
             "credits.minted": True,
-
             "credits.amount": credit_amount
         }
 
-        # update mongodb
+        # update activity in mongodb
         await database.activities.update_one(
             {"_id": ObjectId(activity_id)},
             {"$set": update_data}
         )
 
+        # check farmer wallet exists
+        wallet = await database.wallets.find_one({
+            "farmerId": activity["farmerId"]
+        })
+
+        # create wallet if not exists
+        if not wallet:
+            wallet_data = {
+                "farmerId": activity["farmerId"],
+                "totalCredits": credit_amount,
+                "availableCredits": credit_amount,
+                "soldCredits": 0
+            }
+            await database.wallets.insert_one(wallet_data)
+
+        # update existing wallet
+        else:
+            await database.wallets.update_one(
+                {
+                    "farmerId": activity["farmerId"]
+                },
+                {
+                    "$inc": {
+                        "totalCredits": credit_amount,
+                        "availableCredits": credit_amount
+                    }
+                }
+            )
         return {
             "message": "Carbon credits minted successfully",
             "activityId": activity_id,

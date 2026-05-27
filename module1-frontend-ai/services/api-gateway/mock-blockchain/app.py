@@ -7,11 +7,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
-
 # check mock blockchain service
 @app.get("/")
 async def root():
-
     return {
         "message": "Mock Blockchain Running"
     }

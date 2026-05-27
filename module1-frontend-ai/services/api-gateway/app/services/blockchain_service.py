@@ -2,7 +2,6 @@ import httpx
 
 BLOCKCHAIN_URL = "http://127.0.0.1:9000"
 
-
 # register activity on blockchain
 async def register_activity_on_blockchain(activity_data):
 
