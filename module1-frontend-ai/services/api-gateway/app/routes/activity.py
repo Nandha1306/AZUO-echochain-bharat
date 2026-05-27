@@ -6,7 +6,11 @@ from app.schemas.activity import (
 )
 
 from app.database import database
-from app.services.blockchain_service import register_activity_on_blockchain
+from app.services.blockchain_service import (
+    register_activity_on_blockchain,
+    verify_activity_on_blockchain,
+    mint_credit_on_blockchain
+)
 
 from datetime import datetime
 from bson import ObjectId
@@ -113,3 +117,180 @@ async def get_farmer_activities(farmer_id: str):
         activities.append(activity)
 
     return activities
+
+# verify farmer activity
+@router.post("/activities/{activity_id}/verify")
+async def verify_activity(activity_id: str):
+
+    try:
+
+        # get activity from mongodb
+        activity = await database.activities.find_one({
+            "_id": ObjectId(activity_id)
+        })
+
+        # check activity exists
+        if not activity:
+
+            return {
+                "message": "Activity not found"
+            }
+
+        # remove mongodb object id
+        activity["_id"] = str(activity["_id"])  
+
+        # verify on blockchain
+        blockchain_response = await verify_activity_on_blockchain(activity)
+
+        # update verification details
+        update_data = {
+
+            "status": "verified",
+
+            "verification.verified": True,
+
+            "verification.verifiedBy": "AUDITOR-001",
+
+            "verification.verifiedAt":
+                blockchain_response["verifiedAt"]
+        }
+
+        # update mongodb
+        await database.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {"$set": update_data}
+        )
+
+        return {
+            "message": "Activity verified successfully",
+            "activityId": activity_id,
+            "status": "verified",
+            "verifiedAt": blockchain_response["verifiedAt"]
+        }
+
+    except Exception as e:
+
+        print("ERROR OCCURRED:")
+        traceback.print_exc()
+
+        return {
+            "error": str(e)
+        }
+    
+    # reject farmer activity
+@router.post("/activities/{activity_id}/reject")
+async def reject_activity(activity_id: str):
+
+    try:
+
+        # check activity exists
+        activity = await database.activities.find_one({
+            "_id": ObjectId(activity_id)
+        })
+
+        if not activity:
+
+            return {
+                "message": "Activity not found"
+            }
+
+        # update rejection details
+        update_data = {
+
+            "status": "rejected",
+
+            "verification.verified": False,
+
+            "verification.verifiedBy": "AUDITOR-001",
+
+            "verification.verifiedAt":
+                datetime.utcnow().isoformat()
+        }
+
+        # update mongodb
+        await database.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {"$set": update_data}
+        )
+
+        return {
+            "message": "Activity rejected successfully",
+            "activityId": activity_id,
+            "status": "rejected"
+        }
+
+    except Exception as e:
+
+        print("ERROR OCCURRED:")
+        traceback.print_exc()
+
+        return {
+            "error": str(e)
+        }
+    
+# mint carbon credits
+@router.post("/activities/{activity_id}/mint")
+async def mint_credits(activity_id: str):
+
+    try:
+
+        # get activity from mongodb
+        activity = await database.activities.find_one({
+            "_id": ObjectId(activity_id)
+        })
+
+        # check activity exists
+        if not activity:
+
+            return {
+                "message": "Activity not found"
+            }
+
+        # allow only verified activities
+        if activity["status"] != "verified":
+
+            return {
+                "message": "Activity must be verified before minting"
+            }
+
+        # remove mongodb object id
+        activity["_id"] = str(activity["_id"])
+
+        # mint credits on blockchain
+        blockchain_response = await mint_credit_on_blockchain(activity)
+
+        # simple carbon credit calculation
+        credit_amount = round(activity["acres"] * 0.8, 2)
+
+        # update credit details
+        update_data = {
+
+            "status": "credits_minted",
+
+            "credits.minted": True,
+
+            "credits.amount": credit_amount
+        }
+
+        # update mongodb
+        await database.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {"$set": update_data}
+        )
+
+        return {
+            "message": "Carbon credits minted successfully",
+            "activityId": activity_id,
+            "credits": credit_amount,
+            "status": "credits_minted",
+            "mintedAt": blockchain_response["mintedAt"]
+        }
+
+    except Exception as e:
+
+        print("ERROR OCCURRED:")
+        traceback.print_exc()
+
+        return {
+            "error": str(e)
+        }
