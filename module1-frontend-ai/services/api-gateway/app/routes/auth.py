@@ -1,10 +1,17 @@
 from fastapi import APIRouter
+from fastapi import HTTPException
+
+from typing import Literal
+
 from app.database import database
 
 from app.schemas.auth import (
-    UserRegister,
-    UserLogin
+    UserLogin,
+    UserRegister
 )
+
+from pydantic import BaseModel
+from pydantic import EmailStr
 
 from app.services.security import (
     hash_password,
@@ -17,75 +24,140 @@ router = APIRouter(
     tags=["Authentication"]
 )
 
-# register new user
-@router.post("/auth/register")
-async def register_user(user: UserRegister):
-    # check existing user
-    existing_user = await database.users.find_one({
-        "email": user.email
-    })
+# allowed registration roles
+AllowedRoles = Literal[
+    "farmer",
+    "industry",
+    "auditor",
+    "admin"
+]
 
-    if existing_user:
-        return {
-            "message": "User already exists"
+# register schema
+class UserRegister(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: AllowedRoles
+
+
+# register new user
+@router.post("/register")
+async def register_user(
+    user: UserRegister
+):
+
+    try:
+        # check existing user
+        existing_user = await database.users.find_one({
+            "email": user.email
+        })
+
+        if existing_user:
+            raise HTTPException(
+                status_code=400,
+                detail="User already exists"
+            )
+
+        # create user data
+        user_data = {
+            "name": user.name,
+            "email": user.email,
+            "password": hash_password(
+                user.password
+            ),
+            "role": user.role
         }
 
-    # create user data
-    user_data = {
-        "name": user.name,
-        "email": user.email,
-        "password": hash_password(user.password),
-        "role": user.role
-    }
+        # save user
+        result = await database.users.insert_one(
+            user_data
+        )
 
-    # save user
-    result = await database.users.insert_one(user_data)
+        return {
+            "success": True,
+            "message": "User registered successfully",
+            "data": {
+                "userId": str(result.inserted_id)
+            }
+        }
+    
+    except HTTPException:
+        raise
 
-    return {
-        "message": "User registered successfully",
-        "userId": str(result.inserted_id)
-    }
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
 # login user
-@router.post("/auth/login")
-async def login_user(user: UserLogin):
-    # find user
-    existing_user = await database.users.find_one({
-        "email": user.email
-    })
+@router.post("/login")
+async def login_user(
+    user: UserLogin
+):
 
-    # check user exists
-    if not existing_user:
-        return {
-            "message": "Invalid email or password"
+    try:
+
+        # find user
+        existing_user = await database.users.find_one({
+            "email": user.email
+        })
+
+        # user not found
+        if not existing_user:
+
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password"
+            )
+
+        # verify password
+        valid_password = verify_password(
+            user.password,
+            existing_user["password"]
+        )
+
+        # invalid password
+        if not valid_password:
+
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password"
+            )
+
+        # token payload
+        token_data = {
+
+            "userId": str(existing_user["_id"]),
+
+            "email": existing_user["email"],
+
+            "role": existing_user["role"]
         }
 
-    # verify password
-    valid_password = verify_password(
-        user.password,
-        existing_user["password"]
-    )
+        # generate jwt token
+        access_token = create_access_token(
+            token_data
+        )
 
-    if not valid_password:
         return {
-            "message": "Invalid email or password"
+            "success": True,
+            "message": "Login successful",
+            "data": {
+                "access_token": access_token,
+                "token_type": "bearer",
+                "role": existing_user["role"]
+            }
         }
 
-    # create token data
-    token_data = {
-        "userId": str(existing_user["_id"]),
-        "email": existing_user["email"],
-        "role": existing_user["role"]
-    }
+    except HTTPException:
+        raise
 
-    # generate jwt token
-    access_token = create_access_token(
-        token_data
-    )
+    except Exception as e:
 
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "role": existing_user["role"]
-    }
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

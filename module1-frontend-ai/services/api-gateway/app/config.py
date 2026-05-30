@@ -15,3 +15,7 @@ DATABASE_NAME = os.getenv("DATABASE_NAME")
 SECRET_KEY = os.getenv("SECRET_KEY")
 # jwt algorithm
 ALGORITHM = os.getenv("ALGORITHM")
+
+BLOCKCHAIN_URL = os.getenv(
+    "BLOCKCHAIN_URL"
+)

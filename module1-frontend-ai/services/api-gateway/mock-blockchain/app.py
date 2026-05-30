@@ -23,7 +23,7 @@ async def register_activity(payload: dict):
 
     return {
         "txId": tx_id,
-        "status": "pending_verification",
+        "status": "pending",
         "timestamp": datetime.utcnow().isoformat()
     }
 
